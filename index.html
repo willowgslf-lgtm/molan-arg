@@ -1,28 +1,67 @@
-<!doctype html><html lang="en"><head><script>(function(){
-  var needsPolyfill=(function(){
-    try{
-      if(typeof crypto==="undefined"||typeof crypto.randomUUID!=="function")return true;
-      if(typeof Object.hasOwn!=="function")return true;
-      if(typeof[].at!=="function")return true;
-      if(typeof[].findLast!=="function")return true;
-      return false;
-    }catch(e){return true}
-  })();
-  if(needsPolyfill){
-    document.write('<script src="./assets/polyfills.js"><\/script>');
-  }
-})();</script><script>window.appId = "";
-    window.userId = "";
-    window.tenantId = "";
-    window.userName = "";
-    window.csrfToken = "";
-    window.ENVIRONMENT = "standalone";
-    window.__BASENAME__ = "";
-    const appInfo = {
-      name: "末栏 ARG",
-      avatar: "favicon.svg",
-      description: "十八层恐怖解谜游戏",
-    };
-    if (appInfo.name) {
-      window._appInfo = appInfo;
-    }</script><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>末栏 ARG</title><link rel="modulepreload" crossorigin href="./assets/rolldown-runtime-B0Z9INg1.js"><link rel="modulepreload" crossorigin href="./assets/radix-Coh_YnOT.js"><link rel="modulepreload" crossorigin href="./assets/toolkit-CjPVxD2i.js"><link rel="stylesheet" crossorigin href="./assets/index-RjrLmKBZ.css"><meta property="og:title" content="末栏 ARG"><meta property="og:description" content="十八层恐怖解谜游戏"><meta property="og:image" content="favicon.svg"><meta name="description" content="十八层恐怖解谜游戏"><link rel="icon" href="favicon.svg"></head><body><div id="root"></div></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>末栏 · ARG三部曲</title>
+<meta name="description" content="沉浸式网页恐怖解谜ARG游戏">
+<meta name="theme-color" content="#0a0a0a">
+<meta property="og:title" content="末栏 · ARG三部曲">
+<meta property="og:description" content="沉浸式网页恐怖解谜ARG游戏">
+<style>
+  miaoda-watermark,
+  [data-custom-element$="-watermark"],
+  [data-custom-element$="-watermark-mobile"],
+  [class*="miaoda-watermark"], [id*="miaoda-watermark"]
+  { display:none !important; visibility:hidden !important; opacity:0 !important; pointer-events:none !important; }
+  html,body{margin:0;padding:0;background:#0a0a0a;overflow-x:hidden;}
+  #root{min-height:100vh;}
+</style>
+<script>
+/* ① 部署路径自适应：算出 basename，供路由与本地图片使用 */
+(function () {
+  var p = location.pathname.replace(/\/index\.html?$/i, '');
+  if (p.length > 1 && p.slice(-1) === '/') p = p.slice(0, -1);
+  window.__BASENAME__ = p || '/';
+  window.__ASSET__ = function (name) {
+    var b = window.__BASENAME__;
+    return (b === '/' ? '' : b) + '/assets/img/' + name;
+  };
+  window.appId = 'app_17ghwftdtz3';
+  window.ENVIRONMENT = 'online';
+  window.userId = ''; window.userName = ''; window.csrfToken = ''; window.tenantId = '';
+})();
+</script>
+<script>
+/* ② 移除豆包/妙搭水印（运行时注入，持续清理） */
+(function () {
+  var kill = function () { document.querySelectorAll('miaoda-watermark').forEach(function (e) { e.remove(); }); };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', kill); else kill();
+  new MutationObserver(kill).observe(document.documentElement, { childList: true, subtree: true });
+})();
+</script>
+<script>
+/* ③ 屏蔽妙搭平台遥测接口（游戏逻辑不依赖它们，仅避免控制台 404） */
+(function () {
+  var orig = window.fetch;
+  window.fetch = function (input, init) {
+    var u = (typeof input === 'string') ? input : (input && input.url) || '';
+    if (u.indexOf('__runtime__') !== -1 || u.indexOf('/runtime/api/') !== -1 || u.indexOf('/observability/') !== -1) {
+      return Promise.resolve(new Response('{"code":0,"data":{"timestampNs":"0"}}',
+        { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    return orig.apply(this, arguments);
+  };
+})();
+</script>
+<link rel="stylesheet" crossorigin href="./assets/index-RjrLmKBZ.css">
+<link rel="modulepreload" crossorigin href="./assets/rolldown-runtime-B0Z9INg1.js">
+<link rel="modulepreload" crossorigin href="./assets/radix-Coh_YnOT.js">
+<link rel="modulepreload" crossorigin href="./assets/toolkit-DpgZhxNR.js">
+<script type="module" crossorigin src="./assets/index-B4mzs5wC.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<noscript>请启用 JavaScript 后重试。</noscript>
+</body>
+</html>
