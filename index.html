@@ -1,67 +1,65 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>末栏 · ARG三部曲</title>
-<meta name="description" content="沉浸式网页恐怖解谜ARG游戏">
-<meta name="theme-color" content="#0a0a0a">
-<meta property="og:title" content="末栏 · ARG三部曲">
-<meta property="og:description" content="沉浸式网页恐怖解谜ARG游戏">
-<style>
-  miaoda-watermark,
-  [data-custom-element$="-watermark"],
-  [data-custom-element$="-watermark-mobile"],
-  [class*="miaoda-watermark"], [id*="miaoda-watermark"]
-  { display:none !important; visibility:hidden !important; opacity:0 !important; pointer-events:none !important; }
-  html,body{margin:0;padding:0;background:#0a0a0a;overflow-x:hidden;}
-  #root{min-height:100vh;}
-</style>
-<script>
-/* ① 部署路径自适应：算出 basename，供路由与本地图片使用 */
-(function () {
-  var p = location.pathname.replace(/\/index\.html?$/i, '');
-  if (p.length > 1 && p.slice(-1) === '/') p = p.slice(0, -1);
-  window.__BASENAME__ = p || '/';
-  window.__ASSET__ = function (name) {
-    var b = window.__BASENAME__;
-    return (b === '/' ? '' : b) + '/assets/img/' + name;
-  };
-  window.appId = 'app_17ghwftdtz3';
-  window.ENVIRONMENT = 'online';
-  window.userId = ''; window.userName = ''; window.csrfToken = ''; window.tenantId = '';
-})();
-</script>
-<script>
-/* ② 移除豆包/妙搭水印（运行时注入，持续清理） */
-(function () {
-  var kill = function () { document.querySelectorAll('miaoda-watermark').forEach(function (e) { e.remove(); }); };
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', kill); else kill();
-  new MutationObserver(kill).observe(document.documentElement, { childList: true, subtree: true });
-})();
-</script>
-<script>
-/* ③ 屏蔽妙搭平台遥测接口（游戏逻辑不依赖它们，仅避免控制台 404） */
-(function () {
-  var orig = window.fetch;
-  window.fetch = function (input, init) {
-    var u = (typeof input === 'string') ? input : (input && input.url) || '';
-    if (u.indexOf('__runtime__') !== -1 || u.indexOf('/runtime/api/') !== -1 || u.indexOf('/observability/') !== -1) {
-      return Promise.resolve(new Response('{"code":0,"data":{"timestampNs":"0"}}',
-        { status: 200, headers: { 'Content-Type': 'application/json' } }));
-    }
-    return orig.apply(this, arguments);
-  };
-})();
-</script>
-<link rel="stylesheet" crossorigin href="./assets/index-RjrLmKBZ.css">
-<link rel="modulepreload" crossorigin href="./assets/rolldown-runtime-B0Z9INg1.js">
-<link rel="modulepreload" crossorigin href="./assets/radix-Coh_YnOT.js">
-<link rel="modulepreload" crossorigin href="./assets/toolkit-DpgZhxNR.js">
-<script type="module" crossorigin src="./assets/index-B4mzs5wC.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#070606">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="末栏 · ARG 三部曲 — 一部可离线运行的网页恐怖解谜 ARG。神一直在沉睡，人类的献祭只是蚊子。">
+  <meta property="og:title" content="末栏 · ARG 三部曲">
+  <meta property="og:description" content="沉浸式网页恐怖解谜 ARG。破解档案，进入十八层，找到那颗不属于任何人的心脏。">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="./assets/hospital.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <title>末栏 · ARG 三部曲</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23070606'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%238b0000' stroke-width='1.5'/%3E%3Cpath d='M32 14 L48 41 H16 Z' fill='none' stroke='%23b5121b' stroke-width='1'/%3E%3Cpath d='M32 50 L16 23 H48 Z' fill='none' stroke='%23b5121b' stroke-width='1'/%3E%3Ccircle cx='32' cy='32' r='3' fill='%23b8860b'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./css/style.css">
 </head>
 <body>
-<div id="root"></div>
-<noscript>请启用 JavaScript 后重试。</noscript>
+  <div id="app" aria-live="polite"></div>
+
+  <div id="grain" aria-hidden="true"></div>
+  <div id="flash" aria-hidden="true"></div>
+  <div id="dim" aria-hidden="true"><div class="dim__text"></div></div>
+
+  <button class="audio-toggle" id="audioToggle" type="button" aria-label="切换声音" aria-pressed="true">
+    <svg class="audio-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <path d="M4 9v6h4l5 4V5L8 9H4z"/>
+      <path d="M16 8.5a5 5 0 0 1 0 7"/>
+      <path d="M18.5 6a8.5 8.5 0 0 1 0 12"/>
+    </svg>
+    <svg class="audio-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <path d="M4 9v6h4l5 4V5L8 9H4z"/>
+      <path d="m16 9 5 5m0-5-5 5"/>
+    </svg>
+  </button>
+
+  <aside class="clue-dock" id="clueDock" aria-label="线索栏">
+    <button class="clue-dock__tab" id="clueTab" type="button" aria-expanded="false" aria-controls="cluePanel">
+      <span class="dot" aria-hidden="true"></span>
+      <span>线索</span>
+      <span class="count" id="clueCount">0/8</span>
+    </button>
+    <div class="clue-panel" id="cluePanel">
+      <div class="clue-panel__head">
+        <span>已记录的线索</span>
+        <button type="button" id="clueClose" aria-label="收起线索栏">×</button>
+      </div>
+      <div class="clue-panel__body" id="clueBody"></div>
+    </div>
+  </aside>
+
+  <div class="modal-root" id="modalRoot" role="dialog" aria-modal="true" aria-hidden="true"></div>
+  <div id="toast" role="status"></div>
+
+  <noscript>
+    <div style="position:fixed;inset:0;z-index:99999;background:#070606;color:#d6c9b8;display:grid;place-items:center;padding:30px;text-align:center;font-family:serif;line-height:2;">
+      <p>末栏需要 JavaScript 才能运行。<br>请在浏览器设置中允许 JavaScript，然后刷新页面。</p>
+    </div>
+  </noscript>
+
+  <script src="./js/data.js"></script>
+  <script src="./js/audio.js"></script>
+  <script src="./js/app.js"></script>
 </body>
 </html>
