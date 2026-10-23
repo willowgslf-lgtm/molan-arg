@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#070606">
+  <meta name="version" content="3.0.0">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <meta name="color-scheme" content="dark">
   <meta name="description" content="末栏 · ARG 三部曲 — 一部可离线运行的网页恐怖解谜 ARG。神一直在沉睡，人类的献祭只是蚊子。">
   <meta property="og:title" content="末栏 · ARG 三部曲">
@@ -13,9 +17,10 @@
   <meta name="twitter:card" content="summary_large_image">
   <title>末栏 · ARG 三部曲</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23070606'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%238b0000' stroke-width='1.5'/%3E%3Cpath d='M32 14 L48 41 H16 Z' fill='none' stroke='%23b5121b' stroke-width='1'/%3E%3Cpath d='M32 50 L16 23 H48 Z' fill='none' stroke='%23b5121b' stroke-width='1'/%3E%3Ccircle cx='32' cy='32' r='3' fill='%23b8860b'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="./css/style.css">
+  <link rel="stylesheet" href="./css/style.css?v=3.0.0">
+  <link rel="stylesheet" href="./css/doubao.css?v=3.0.0">
 </head>
-<body>
+<body class="db-ui">
   <div id="app" aria-live="polite"></div>
 
   <div id="grain" aria-hidden="true"></div>
@@ -38,12 +43,16 @@
     <button class="clue-dock__tab" id="clueTab" type="button" aria-expanded="false" aria-controls="cluePanel">
       <span class="dot" aria-hidden="true"></span>
       <span>线索</span>
-      <span class="count" id="clueCount">0/8</span>
+      <span class="count" id="clueCount">0/5</span>
     </button>
     <div class="clue-panel" id="cluePanel">
-      <div class="clue-panel__head">
-        <span>已记录的线索</span>
-        <button type="button" id="clueClose" aria-label="收起线索栏">×</button>
+      <div class="clue-panel__head db-clue-head">
+        <div class="db-clue-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+          <span>线索收集</span>
+          <span class="db-clue-num" id="clueCountPanel">0/5</span>
+        </div>
+        <button type="button" id="clueClose" class="db-clue-collapse" aria-label="收起线索栏">⌄</button>
       </div>
       <div class="clue-panel__body" id="clueBody"></div>
     </div>
@@ -58,8 +67,8 @@
     </div>
   </noscript>
 
-  <script src="./js/data.js"></script>
-  <script src="./js/audio.js"></script>
-  <script src="./js/app.js"></script>
+  <script src="./js/data.js?v=3.0.0"></script>
+  <script src="./js/audio.js?v=3.0.0"></script>
+  <script src="./js/app.js?v=3.0.0"></script>
 </body>
 </html>

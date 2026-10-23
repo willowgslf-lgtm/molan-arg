@@ -23,7 +23,8 @@
   const VERSION = 2;
 
   let state = loadState();
-  let route = { scene: validScene(state.lastScene) ? state.lastScene : 'opening' };
+  // Every full page load starts a fresh run.
+  let route = { scene: 'opening' };
   let historyStack = [];
   let transitioning = false;
   let pendingPatientIntro = false;
@@ -37,8 +38,19 @@
   let typingBusy = false;
   let patientCountTimer = null;
   let patientCount = 0;
+  let lastRenderedScene = null;
 
   const SCENES = {};
+
+  // The original DouBao build shows five clue cards, not one card per puzzle.
+  // The underlying clue keys stay separate so the story logic is unchanged.
+  const CLUE_GROUPS = [
+    { id: 'g-d074', name: 'D-074 供体', keys: ['d074', 'witness'], hint: '沈迟的心脏编号，以及张桂兰离开的那 68 秒。' },
+    { id: 'g-entry', name: '临渊研究所', keys: ['linyuan', 'repair'], hint: '凯撒密码与数字摩斯解开的两道入口。' },
+    { id: 'g-forum', name: '华夏灵异网', keys: ['huaxia', 'floor18'], hint: 'Base64 校验码，以及十八层的代号与印记。' },
+    { id: 'g-vessel', name: '黑暗经书', keys: ['vessel'], hint: 'Atbash 首尾互换后得到的那个词。' },
+    { id: 'g-city', name: '最终门', keys: ['chengdu'], hint: '三条线交汇的城市。' }
+  ];
 
   /* ---------------------------------------------------------
      state + storage
@@ -98,48 +110,21 @@
   }
 
   function loadState() {
-    const base = defaultState();
-    let raw = null;
+    // The 1:1 handbook requires a full reset on every refresh:
+    // no puzzle progress, no endings and no scene resume are persisted.
+    // Only the sound on/off preference is kept, by audio.js.
     try {
-      raw = JSON.parse(window.localStorage.getItem(SAVE_KEY) || 'null');
-    } catch (e) {
-      raw = null;
-    }
-    if (!raw || typeof raw !== 'object') {
-      try {
-        if (window.localStorage.getItem(LEGACY_KEY) === 'true') base.gameCompleted = true;
-      } catch (e) {}
-      return base;
-    }
-    const next = Object.assign(base, raw);
-    next.puzzles = Object.assign({}, base.puzzles, raw.puzzles || {});
-    next.warnings = Object.assign({}, base.warnings, raw.warnings || {});
-    next.choices = Object.assign({}, base.choices, raw.choices || {});
-    next.ui = Object.assign({}, base.ui, raw.ui || {});
-    next.clues = raw.clues && typeof raw.clues === 'object' ? raw.clues : {};
-    next.endings = Array.isArray(raw.endings) ? raw.endings.filter((x) => typeof x === 'string') : [];
-    next.terminalAsked = Array.isArray(raw.terminalAsked) ? raw.terminalAsked.filter((x) => typeof x === 'string') : [];
-    next.terminalLog = Array.isArray(raw.terminalLog) ? raw.terminalLog.filter((x) => x && typeof x === 'object') : [];
-    next.completedRuns = Number.isFinite(raw.completedRuns) ? raw.completedRuns : 0;
-    next.run = Math.max(1, Number.isFinite(raw.run) ? raw.run : 1);
-    next.corridorStep = Math.max(0, Number.isFinite(raw.corridorStep) ? raw.corridorStep : 0);
-    next.endingStep = Math.max(0, Number.isFinite(raw.endingStep) ? raw.endingStep : 0);
-    next.endingId = raw.endingId || null;
-    next.lastScene = validScene(raw.lastScene) ? raw.lastScene : 'opening';
-    next.version = VERSION;
-    try {
-      if (window.localStorage.getItem(LEGACY_KEY) === 'true') next.gameCompleted = true;
+      window.localStorage.removeItem(SAVE_KEY);
+      window.localStorage.removeItem(LEGACY_KEY);
     } catch (e) {}
-    return next;
+    return defaultState();
   }
 
   function saveState() {
+    // Keep the in-memory session consistent, but deliberately do not write
+    // story progress to localStorage. Refreshing the page therefore restarts.
     state.version = VERSION;
     state.lastScene = route.scene;
-    try {
-      window.localStorage.setItem(SAVE_KEY, JSON.stringify(state));
-      if (state.gameCompleted) window.localStorage.setItem(LEGACY_KEY, 'true');
-    } catch (e) {}
   }
 
   function validScene(scene) {
@@ -182,10 +167,10 @@
     return (state.warnings.shenchi ? 1 : 0) + (state.warnings.shenbo ? 1 : 0);
   }
   function clueTotal() {
-    return D.clueDefs.length;
+    return CLUE_GROUPS.length;
   }
   function clueFoundCount() {
-    return D.clueDefs.filter((c) => !!state.clues[c.id]).length;
+    return CLUE_GROUPS.filter((g) => g.keys.some((k) => !!state.clues[k])).length;
   }
   function endedCount() {
     return D.endings ? Object.keys(D.endings).filter((k) => state.endings.includes(k)).length : state.endings.length;
@@ -309,16 +294,23 @@
 
   function updateClueUI() {
     if (!clueCount || !clueBody) return;
-    clueCount.textContent = `${clueFoundCount()}/${clueTotal()}`;
-    clueBody.innerHTML = D.clueDefs.map((c) => {
-      const on = !!state.clues[c.id];
+    const countText = `${clueFoundCount()}/${clueTotal()}`;
+    clueCount.textContent = countText;
+    const panelCount = byId('clueCountPanel');
+    if (panelCount) panelCount.textContent = countText;
+    clueBody.innerHTML = CLUE_GROUPS.map((g) => {
+      const foundKeys = g.keys.filter((k) => !!state.clues[k]);
+      const on = foundKeys.length > 0;
+      const answers = foundKeys.map((k) => {
+        const def = D.clueDefs.find((x) => x.id === k);
+        return def ? def.answer : '';
+      }).filter(Boolean).join(' / ');
       return `<div class="clue-item ${on ? '' : 'is-locked'}">
-        <div class="clue-item__top">
-          <span class="clue-item__name">${on ? esc(c.name) : '？？？'}</span>
-          <span class="clue-item__lock">${on ? 'REC' : 'LOCK'}</span>
+        <div class="clue-item__icon">${on ? dbIcon('check') : dbIcon('lock')}</div>
+        <div class="clue-item__content">
+          <div class="clue-item__top"><span class="clue-item__name">${on ? esc(g.name) : '???'}</span>${on ? '<span class="clue-item__lock">已记录</span>' : ''}</div>
+          ${on ? `<p class="clue-item__answer">${esc(answers)}</p><p class="clue-item__hint">${esc(g.hint)}</p>` : '<p class="clue-item__hint">尚未发现此线索...</p>'}
         </div>
-        <p class="clue-item__answer">${on ? esc(c.answer) : '尚未发现'}</p>
-        <p class="clue-item__hint">${on ? esc(c.hint) : '继续调查，它会自己浮出来。'}</p>
       </div>`;
     }).join('');
   }
@@ -509,7 +501,7 @@
       historyStack.push(route.scene);
       if (historyStack.length > 40) historyStack.shift();
     }
-    closeClue();
+    if (clueDock && clueDock.classList.contains('is-open') && window.innerWidth < 700) closeClue();
     closeModal(true);
     if (opt.flash === false) {
       route = { scene: nextScene };
@@ -532,7 +524,6 @@
 
   function goBack() {
     if (modalOpen) { closeModal(); return; }
-    if (clueDock && clueDock.classList.contains('is-open')) { closeClue(); return; }
     if (route.scene === 'forum' && state.ui.forumPost) {
       state.ui.forumPost = null;
       saveState();
@@ -558,6 +549,8 @@
     const opt = options || {};
     if (!opt.keepModal) closeModal(true);
     const scene = route.scene;
+    const sceneChanged = lastRenderedScene !== scene;
+    lastRenderedScene = scene;
     if (scene !== 'terminal') { termTyping = false; termToken += 1; }
     if (scene !== 'ending' && heartTimer) { window.clearInterval(heartTimer); heartTimer = null; }
     if (scene !== 'ending' && fakeCountdownTimer) { window.clearInterval(fakeCountdownTimer); fakeCountdownTimer = null; }
@@ -581,6 +574,10 @@
     }
     if (!opt.keepScroll) {
       window.scrollTo(0, 0);
+    }
+    if (sceneChanged) {
+      if (window.innerWidth >= 1024 && ['opening', 'oasLogin', 'oasDashboard'].includes(scene)) openClue();
+      else if (!['opening', 'oasLogin', 'oasDashboard'].includes(scene)) closeClue();
     }
     afterRender();
   }
@@ -751,44 +748,50 @@
       tone: 'dark',
       kicker: 'OAS / INTERNAL',
       title,
-      body: `<div style="color:#b9ada0;font-size:13px;line-height:1.9">${body}</div>`,
+      body: `<div style="color:#4b5563;font-size:13px;line-height:1.9">${body}</div>`,
       actions: [{ label: '知道了', tone: 'ghost' }]
     });
+  }
+
+  /* ---------------------------------------------------------
+     flat UI icon helper
+     --------------------------------------------------------- */
+  const DB_ICONS = {
+    user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+    lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+    activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+    users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+    heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.5 1.1-1.1a5.5 5.5 0 0 0-.1-7.8z"/>',
+    clipboard: '<rect width="8" height="4" x="8" y="2" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6M9 16h6"/>',
+    bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+    alert: '<path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3z"/><path d="M12 9v4M12 17h.01"/>',
+    file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6"/>',
+    arrow: '<path d="M5 12h14M12 5l7 7-7 7"/>',
+    logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
+    check: '<path d="M20 6 9 17l-5-5"/>',
+    chevron: '<path d="m6 9 6 6 6-6"/>',
+    shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+    monitor: '<rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8M12 17v4"/>'
+  };
+  function dbIcon(name, cls) {
+    return `<svg class="db-icon ${cls || ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${DB_ICONS[name] || ''}</svg>`;
   }
 
   /* ---------------------------------------------------------
      SCENE: opening
      --------------------------------------------------------- */
   SCENES.opening = function () {
-    const hasSave = state.started;
-    const completed = state.gameCompleted;
-    const runLabel = state.run > 1 ? `第 ${state.run} 周目` : (completed ? '回响已记录' : '初次接入');
-    let primary;
-    if (hasSave) {
-      primary = `<button class="btn btn--primary btn--lg" type="button" data-action="continue-game">继续调查</button>`;
-    } else if (completed) {
-      primary = `<button class="btn btn--primary btn--lg" type="button" data-action="new-run">进入二周目</button>`;
-    } else {
-      primary = `<button class="btn btn--primary btn--lg" type="button" data-action="start-game">进入档案</button>`;
-    }
-    return `<main class="screen screen--opening">
-      <div class="opening-glow" aria-hidden="true"></div>
-      <div class="opening-copy">
-        <p class="opening-run">${esc(runLabel)} · ${state.run > 1 ? 'THE SECOND PASS' : 'ARCHIVE 74'}</p>
-        <p class="fiction">${esc(D.meta.disclaimer)}</p>
-        <h1 class="opening-title"><span>末</span><span>栏</span></h1>
-        <p class="opening-sub">· ARG 三部曲 ·</p>
-        <p class="opening-tagline">神一直在沉睡。<br>人类的献祭，只是蚊子。</p>
-        <div class="opening-actions">
-          ${primary}
-          ${hasSave ? '<button class="btn btn--quiet" type="button" data-action="request-reset">重新开始</button>' : ''}
-          ${completed ? '<button class="btn btn--quiet" type="button" data-action="open-gallery">结局档案 · ' + endedCount() + '/4</button>' : ''}
-        </div>
+    return `<main class="screen screen--opening db-opening" data-action="start-game">
+      <button class="db-opening__hit" type="button" data-action="start-game" aria-label="点击进入档案"></button>
+      <div class="db-opening__inner">
+        <div class="db-opening__glow" aria-hidden="true"></div>
+        <p class="db-opening__fiction">${esc(D.meta.disclaimer)}</p>
+        <p class="db-opening__hint">点击任意位置继续</p>
+        <h1 class="db-opening__title">末栏</h1>
+        <p class="db-opening__sub">· ARG 三部曲 ·</p>
       </div>
-      <div class="opening-foot">
-        <span><span class="dot-live"></span>SERVER 03:47 / SIGNAL UNSTABLE</span>
-        <span class="foot-right">${esc(D.meta.contentWarning)} · 建议佩戴耳机</span>
-      </div>
+      <p class="db-opening__version">v2.0 / SIGNAL 03:47</p>
     </main>`;
   };
 
@@ -800,67 +803,49 @@
     const unlocked = state.gameCompleted;
     const cred = role === 'shenchi' ? D.accounts.shenchi : role === 'shenbo' ? D.accounts.shenbo : D.accounts.oas;
     const prefill = role === 'staff';
-    const roleName = role === 'shenchi' ? '患者样本端' : role === 'shenbo' ? '设备工程端' : '工作人员端';
-    return `<main class="screen screen--login">
-      <section class="login-visual">
-        <div class="login-sys">
-          <div class="cross">✚</div>
-          <div>
-            <div class="name">OAS 器官分配与共享中心</div>
-            <div class="sub">XI'AN BRANCH / INTERNAL SYSTEM</div>
+    const tab = (id, label, locked) => `<button type="button" class="db-login-tab ${role === id ? 'is-active' : ''} ${locked ? 'is-locked' : ''}" data-action="switch-login" data-id="${id}">
+      <span>${label}</span>${locked ? '<span class="db-tab-lock">锁定</span>' : ''}
+    </button>`;
+    return `<main class="screen db-login">
+      <header class="db-oas-top">
+        <div class="db-oas-top__inner">
+          <div class="db-oas-brand">
+            <span class="db-oas-logo">OAS</span>
+            <div><div class="db-oas-brand__title">人体器官分配与共享信息平台</div><div class="db-oas-brand__sub">Organ Allocation &amp; Sharing System</div></div>
           </div>
+          <div class="db-version">版本 v3.2.1</div>
         </div>
-        <div class="login-quote">
-          <h2>每一份档案，<br>都在等待一个名字。</h2>
-          <p>本系统仅向授权器官协调员开放。所有访问行为将被记录。若你在非工作时间看到异常档案，请不要独自处理。</p>
-        </div>
-        <div class="login-meta"><span>NODE 74-XA</span><span>2026.10.23</span><span>03:47</span></div>
-      </section>
-
-      <section class="login-panel">
-        <button class="login-back" type="button" data-action="back">← 返回标题</button>
-        <div class="login-card">
-          <div class="login-card__head">
-            <p class="eyebrow">ORGAN ALLOCATION SYSTEM</p>
-            <h1>OAS 器官分配协调系统</h1>
-            <p>${unlocked ? '检测到已完成调查记录。二周目身份通道已开放。' : '请输入您的工号与密码。所有访问行为将被记录。'}</p>
+      </header>
+      <div class="db-login-main">
+        <div class="db-login-card">
+          <div class="db-login-tabs">
+            ${tab('staff', '管理员登录', false)}
+            ${tab('shenchi', '患者端登录', false)}
+            ${(unlocked || role === 'shenbo') ? tab('shenbo', '工程端登录', false) : ''}
           </div>
-
-          <div class="login-tabs" role="tablist" aria-label="登录身份">
-            <button class="login-tab ${role === 'staff' ? 'is-active' : ''}" type="button" data-action="switch-login" data-id="staff" role="tab" aria-selected="${role === 'staff'}">工作人员</button>
-            <button class="login-tab ${role === 'shenchi' ? 'is-active' : ''} ${unlocked ? '' : 'is-locked'}" type="button" data-action="switch-login" data-id="shenchi" role="tab" aria-selected="${role === 'shenchi'}">样本端 ${unlocked ? '' : '<span class="lock">⌑</span>'}</button>
-            <button class="login-tab ${role === 'shenbo' ? 'is-active' : ''} ${unlocked ? '' : 'is-locked'}" type="button" data-action="switch-login" data-id="shenbo" role="tab" aria-selected="${role === 'shenbo'}">工程端 ${unlocked ? '' : '<span class="lock">⌑</span>'}</button>
-          </div>
-
-          <form class="login-form" data-form="oas-login" novalidate>
-            <div class="official-field">
-              <label for="oas-user">${role === 'staff' ? '工号' : '样本 / 工程账号'}</label>
-              <input class="field" id="oas-user" name="user" type="text" autocomplete="username" placeholder="${role === 'staff' ? '请输入工号' : '请输入账号'}" value="${prefill ? esc(cred.user) : ''}">
+          <form class="db-login-form" data-form="oas-login" novalidate>
+            <div class="db-field-group">
+              <label for="oas-user">账号</label>
+              <div class="db-input-wrap">${dbIcon('user')}<input class="db-input" id="oas-user" name="user" type="text" autocomplete="username" placeholder="请输入账号" value="${prefill ? esc(cred.user) : ''}"></div>
             </div>
-            <div class="official-field">
+            <div class="db-field-group">
               <label for="oas-pass">密码</label>
-              <input class="field" id="oas-pass" name="pass" type="password" autocomplete="current-password" placeholder="请输入密码" value="${prefill ? esc(cred.pass) : ''}">
+              <div class="db-input-wrap">${dbIcon('lock')}<input class="db-input" id="oas-pass" name="pass" type="password" autocomplete="current-password" placeholder="请输入密码" value="${prefill ? esc(cred.pass) : ''}"></div>
             </div>
-            <p class="form-error" data-error></p>
-            <button class="login-btn" type="submit">登 录</button>
+            <div class="db-login-row">
+              <label class="db-check"><input type="checkbox" checked> 记住账号</label>
+              <button type="button" class="db-text-link" data-action="noop">忘记密码？</button>
+            </div>
+            <p class="db-form-error" data-error></p>
+            <button class="db-btn db-btn--primary db-btn--block" type="submit">登 录</button>
           </form>
-
-          <div class="login-hint ${role === 'staff' ? '' : 'login-hint--second'}">
-            ${role === 'staff'
-              ? '默认工号：<strong>chengwei</strong>　密码：<strong>chengwei123</strong>'
-              : role === 'shenchi'
-                ? '二周目样本凭据：<strong>shenchi_heart</strong> / <strong>747474</strong>'
-                : '二周目工程凭据：<strong>shenbo</strong> / <strong>686868</strong>'}
-            <br><span style="opacity:.7">${role === 'staff' ? '演示凭据已自动填入，直接点击登录。' : '这个身份只能看到属于他自己的东西。'}</span>
-          </div>
-
-          <div class="login-security"><span class="status-dot"></span><span>${unlocked ? '二周目通道在线' : '安全连接已建立'} · TLS 1.3 · 访问审计开启</span></div>
+          ${role !== 'staff' ? `<p class="db-demo-hint">${role === 'shenchi' ? '患者端账号：shenchi_heart　密码：747474' : '工程端账号：shenbo　密码：686868'}</p>` : ''}
         </div>
-        <div class="login-foot">
-          OAS-XA / build 2026.10.23<br>
-          本系统为虚构游戏界面，不对应任何真实机构。
+        <div class="db-login-foot">
+          <div>© 2026 国家器官分配与共享中心 版权所有</div>
+          <div>仅限授权人员访问 · 所有操作将被记录</div>
         </div>
-      </section>
+      </div>
     </main>`;
   };
 
@@ -868,25 +853,32 @@
      SCENE: OAS dashboard
      --------------------------------------------------------- */
   function oasHeader(active) {
-    return `<header class="oas-head">
-      <div class="oas-head__top">
-        <div class="oas-brand">
-          <div class="mark">✚</div>
-          <div><div class="t">OAS 器官分配与共享中心</div><div class="s">XI'AN BRANCH / INTERNAL</div></div>
-        </div>
-        <div class="oas-user">
-          <button class="oas-exit" type="button" data-action="back">← 退出</button>
-          <span>${esc(D.oas.today)} · 03:47</span>
-          <span>当前用户：<strong>${esc(D.oas.operator)}</strong></span>
-          <span class="oas-brand"><span class="mark" style="width:24px;height:24px;font-size:11px">程</span></span>
+    const nav = (id, label) => `<button type="button" class="db-oas-nav__item ${active === id ? 'is-active' : ''}" data-action="${id === 'dashboard' ? 'oas-nav' : 'oas-section'}" data-id="${id}">${label}</button>`;
+    return `<header class="db-oas-header">
+      <div class="db-oas-top">
+        <div class="db-oas-top__inner">
+          <div class="db-oas-brand">
+            <span class="db-oas-logo">OAS</span>
+            <div><div class="db-oas-brand__title">人体器官分配与共享信息平台</div><div class="db-oas-brand__sub">Organ Allocation &amp; Sharing System</div></div>
+          </div>
+          <div class="db-version">版本 v3.2.1</div>
+          <button class="db-mobile-exit" type="button" data-action="back">退出</button>
         </div>
       </div>
-      <nav class="oas-nav" aria-label="OAS 导航">
-        <a class="${active === 'dashboard' ? 'is-active' : ''}" href="#" data-action="oas-nav" data-id="dashboard">工作台</a>
-        <a class="${active === 'archives' ? 'is-active' : ''}" href="#" data-action="oas-nav" data-id="archives">档案管理</a>
-        <a href="#" data-action="oas-section" data-id="allocation">分配记录</a>
-        <a href="#" data-action="oas-section" data-id="followup">随访管理</a>
-        <a href="#" data-action="oas-section" data-id="alerts">预警中心</a>
+      <nav class="db-oas-nav" aria-label="OAS 导航">
+        <div class="db-oas-nav__inner">
+          <div class="db-oas-nav__links">
+            ${nav('dashboard', '工作台')}
+            ${nav('archives', '档案管理')}
+            ${nav('allocation', '分配记录')}
+            ${nav('followup', '随访管理')}
+            ${nav('alerts', '预警中心')}
+          </div>
+          <div class="db-oas-nav__user">
+            <span>程未 · 器官协调员</span>
+            <button type="button" class="db-nav-exit" data-action="back">${dbIcon('logout')}<span>退出</span></button>
+          </div>
+        </div>
       </nav>
     </header>`;
   }
@@ -894,103 +886,91 @@
   SCENES.oasDashboard = function () {
     const p = state.puzzles;
     const both = p.shenchi && p.shenbo;
-    const cluePath = p.base64;
-    const archiveCard = (a) => {
+    const stats = [
+      { label: '本月器官分配数', value: '128', icon: 'activity' },
+      { label: '等待移植名单', value: '2,437', icon: 'users' },
+      { label: '术后随访中', value: '892', icon: 'heart' },
+      { label: '本月完成随访', value: '356', icon: 'clipboard' },
+      { label: '待跟进', value: '47', icon: 'users' },
+      { label: '异常访问预警', value: '3', icon: 'bell', danger: true }
+    ];
+    const archiveRow = (a) => {
       const solved = !!p[a.id];
-      return `<button class="archive-card ${solved ? 'is-solved' : ''}" type="button" data-action="open-archive" data-id="${a.id}">
-        <div class="archive-card__top">
-          <span class="archive-card__tag">${solved ? '已复核 · 已解密' : esc(a.tag)}</span>
-          <span class="chip ${solved ? 'chip--green' : 'chip--red'}">${solved ? 'RESOLVED' : 'REVIEW'}</span>
-        </div>
-        <h3>${esc(a.title)}</h3>
-        <p>${esc(a.summary)}</p>
-        <div class="archive-card__meta"><span>${esc(a.archiveNo)}</span><span>${esc(a.city)}</span><span>${esc(a.date)}</span></div>
-        <span class="archive-card__arrow">→</span>
-        ${solved ? '<span class="archive-card__solved-stamp">已解锁</span>' : ''}
-      </button>`;
-    };
-    const step = (done, current, num, title, desc, status) => `
-      <div class="progress-row ${done ? 'is-done' : ''} ${current ? 'is-current' : ''}">
-        <span class="num">${done ? '✓' : num}</span>
-        <div><h3>${title}</h3><p>${desc}</p></div>
-        <span class="state">${status}</span>
-      </div>`;
-    return `<main class="screen screen--oas">
-      ${oasHeader('dashboard')}
-      <div class="oas-page">
-        <div class="oas-breadcrumb"><span>西安分中心</span><span>/</span><span>工作台</span></div>
-        <div class="oas-title-row">
-          <div><h1>工作台</h1><p>欢迎回来，程未。今日有 2 份异常档案等待人工复核。</p></div>
-          <div class="oas-date">2026-10-23　03:47:12　CST</div>
-        </div>
-
-        <div class="stat-grid">
-          ${D.oas.stats.map((s) => `<div class="stat-card ${s.danger ? 'stat-card--danger' : ''}">
-            <div class="label">${esc(s.label)}</div><div class="value">${esc(s.value)}</div><div class="note">${esc(s.note)}</div>
-          </div>`).join('')}
-        </div>
-
-        <div class="alert-stack">
-          ${D.oas.alerts.map((a) => `<div class="alert-item">
-            <span class="level">${esc(a.level)}级<br>${esc(a.time)}</span>
-            <div class="body"><h3>${esc(a.title)}</h3><p>${esc(a.body)}</p><time>${esc(a.time)} · AUDIT LOG</time></div>
-          </div>`).join('')}
-        </div>
-
-        <div class="dash-grid">
-          <div>
-            <section class="panel">
-              <div class="panel__head"><h2>待复核档案</h2><span class="tiny muted">2 条记录 · 访问已记录</span></div>
-              <div class="panel__body"><div class="archive-grid">${D.oas.archives.map(archiveCard).join('')}</div></div>
-            </section>
-
-            <section class="panel progress-panel">
-              <div class="panel__head"><h2>调查线</h2><span class="tiny muted">PERSONAL TRACE</span></div>
-              <div class="progress-list">
-                ${step(p.shenchi, !p.shenchi, '01', '沈迟 · D-074 受体档案', '凯撒密文 / 临渊入口', p.shenchi ? '已解密' : '待复核')}
-                ${step(p.shenbo, !p.shenbo, '02', '沈搏 · 设备维修档案', '数字摩斯 / 报修入口', p.shenbo ? '已解密' : '待复核')}
-                ${step(p.base64, both && !p.base64, '03', '临渊研究所 · 新闻页', 'Base64 校验码 / 华夏灵异网', p.base64 ? '已解锁' : both ? '可调查' : '需先复核档案')}
-                ${step(p.hellLogin, p.base64 && !p.hellLogin, '04', '十八层', '旧帖隐藏入口 / 最终门', p.hellLogin ? '已进入' : '未进入')}
-              </div>
-            </section>
+      return `<div class="db-archive-row">
+        <div class="db-archive-icon ${solved ? 'is-solved' : ''}">${dbIcon(a.id === 'shenchi' ? 'heart' : 'file')}</div>
+        <div class="db-archive-main">
+          <div class="db-archive-titleline">
+            <strong>${esc(a.name)}</strong>
+            <span class="db-tag ${solved ? 'db-tag--green' : 'db-tag--red'}">${solved ? '已复核' : esc(a.status)}</span>
+            <span class="db-code">${esc(a.archiveNo)}</span>
           </div>
+          <div class="db-archive-meta">${a.age}岁 <i></i> ${esc(a.city)} <i></i> ${esc(a.organ)}</div>
+          <p>${esc(a.summary)}</p>
+        </div>
+        <button type="button" class="db-row-link" data-action="open-archive" data-id="${a.id}">查看详情 →</button>
+      </div>`;
+    };
+    const followups = [
+      ['OAS-2026-00187', '王建国', '肝脏移植', '正常', '2026-03-12'],
+      ['OAS-2026-00203', '李秀兰', '肾脏移植', '正常', '2026-03-10'],
+      ['OAS-2026-00156', '张伟', '心脏移植', '观察中', '2026-03-08']
+    ];
+    return `<main class="screen db-page db-page--oas">
+      ${oasHeader('dashboard')}
+      <div class="db-container">
+        <div class="db-breadcrumb">当前位置：工作台</div>
+        <section class="db-page-head">
+          <div><h1>OAS 器官分配与共享工作台</h1><p>欢迎回来，程未（OAS 器官协调员）</p></div>
+          <div class="db-date">2026年10月24日 星期六</div>
+        </section>
 
-          <aside>
-            <div class="side-card">
-              <h3>协调员信息</h3>
-              <div class="profile-row">
-                <div class="profile-avatar">程</div>
-                <div><div class="name">程未</div><div class="role">器官协调员 · 西安分中心</div></div>
-              </div>
-              <div class="side-list">
-                <div><span>工号</span><strong>chengwei</strong></div>
-                <div><span>权限</span><strong>LEVEL 3</strong></div>
-                <div><span>今日登录</span><strong>03:47:12</strong></div>
-                <div><span>异常调阅</span><strong style="color:#a83a3a">74 次</strong></div>
-              </div>
-            </div>
-
-            <div class="side-card">
-              <h3>快速通道</h3>
-              ${both ? `<button class="quick-action" type="button" data-action="go" data-id="institute"><span>临渊研究所官网</span><strong>已解锁 →</strong></button>` : `<div class="quick-action is-locked"><span>临渊研究所官网</span><strong>需复核 2/2</strong></div>`}
-              ${p.base64 ? `<button class="quick-action" type="button" data-action="go" data-id="forum"><span>华夏灵异网</span><strong>已解锁 →</strong></button>` : ''}
-              ${p.hellLogin ? `<button class="quick-action" type="button" data-action="go" data-id="hell"><span>十八层</span><strong>已进入 →</strong></button>` : ''}
-              ${state.gameCompleted ? `<button class="quick-action" type="button" data-action="go-portal" data-id="shenchi"><span>患者样本端</span><strong>${state.warnings.shenchi ? '已劝阻' : '二周目 →'}</strong></button>
-              <button class="quick-action" type="button" data-action="go-portal" data-id="shenbo"><span>设备工程端</span><strong>${state.warnings.shenbo ? '已劝阻' : '二周目 →'}</strong></button>` : `<div class="quick-action is-locked"><span>二周目身份通道</span><strong>完成一次调查后开放</strong></div>`}
-            </div>
-
-            <div class="side-card">
-              <h3>本周提醒</h3>
-              <p class="tiny" style="color:#8493a0;line-height:1.8">“不要在 03:47 之后调阅 D 系列档案。如果屏幕里出现一张脸，不要和它对视。”</p>
-              <p class="tiny" style="color:#a0adb8;margin-top:10px">—— 张建新 主任</p>
-            </div>
-          </aside>
+        <div class="db-stat-grid">
+          ${stats.map((s) => `<div class="db-stat ${s.danger ? 'is-danger' : ''}">
+            <div class="db-stat__icon">${dbIcon(s.icon)}</div>
+            <div class="db-stat__label">${s.label}</div>
+            <div class="db-stat__value">${s.value}</div>
+          </div>`).join('')}
         </div>
 
-        <div class="oas-foot">
-          <span>OAS-XA / build 2026.10.23 / 所有操作写入审计日志</span>
-          <span>当前身份：${esc(currentIdentityLabel())} · ${state.gameCompleted ? '二周目已开启' : '一周目'}</span>
-        </div>
+        <section class="db-panel">
+          <div class="db-panel-head db-panel-head--danger">
+            <div>${dbIcon('alert')}<strong>异常档案</strong><span class="db-tag db-tag--red">2 份待处理</span></div>
+            <button type="button" class="db-text-link" data-action="oas-section" data-id="archives">查看全部 →</button>
+          </div>
+          ${D.oas.archives.map(archiveRow).join('')}
+        </section>
+
+        <section class="db-panel">
+          <div class="db-panel-head db-panel-head--amber">
+            <div>${dbIcon('alert')}<strong>异常访问预警</strong><span class="db-badge db-badge--amber">高危 · 3 条</span></div>
+            <button type="button" class="db-text-link" data-action="oas-section" data-id="alerts">查看全部</button>
+          </div>
+          ${D.oas.alerts.map((a) => `<div class="db-alert-row">
+            <div class="db-alert-row__icon">${dbIcon('shield')}</div>
+            <div><strong>${esc(a.title)}</strong><p>${esc(a.body)}</p><span>${esc(a.time)}</span></div>
+            <span class="db-tag db-tag--amber">${esc(a.level)}危</span>
+          </div>`).join('')}
+          <div class="db-panel-foot">已自动拦截 <strong>1,247</strong> 次非法请求</div>
+        </section>
+
+        <section class="db-panel">
+          <div class="db-panel-head"><div>${dbIcon('clipboard')}<strong>近期随访记录</strong></div><button type="button" class="db-text-link" data-action="oas-section" data-id="followup">全部随访 →</button></div>
+          <div class="db-table-wrap"><table class="db-table">
+            <thead><tr><th>档案编号</th><th>姓名</th><th>类型</th><th>状态</th><th>最近随访</th></tr></thead>
+            <tbody>${followups.map((r) => `<tr><td class="db-code">${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td><span class="db-dot ${r[3] === '正常' ? 'is-green' : 'is-amber'}"></span>${r[3]}</td><td>${r[4]}</td></tr>`).join('')}</tbody>
+          </table></div>
+        </section>
+
+        ${(both || p.base64 || p.hellLogin) ? `<section class="db-panel db-entry-panel">
+          <div class="db-panel-head"><div>${dbIcon('search')}<strong>调查入口</strong></div><span class="db-muted">已解锁</span></div>
+          <div class="db-entry-links">
+            ${both ? `<button type="button" class="db-entry" data-action="go" data-id="institute">${dbIcon('file')}<span>临渊研究所官网</span><em>已解锁</em></button>` : ''}
+            ${p.base64 ? `<button type="button" class="db-entry" data-action="go" data-id="forum">${dbIcon('search')}<span>华夏灵异网</span><em>已解锁</em></button>` : ''}
+            ${p.hellLogin ? `<button type="button" class="db-entry" data-action="go" data-id="hell">${dbIcon('alert')}<span>十八层</span><em>已进入</em></button>` : ''}
+          </div>
+        </section>` : ''}
+
+        <div class="db-oas-footer"><span>OAS-XA / build 2026.10.24 / 所有操作写入审计日志</span><span>当前身份：${esc(currentIdentityLabel())}</span></div>
       </div>
     </main>`;
   };
@@ -1003,108 +983,91 @@
     const solved = !!state.puzzles[a.id];
     const isShenbo = a.id === 'shenbo';
     const puzzle = a.puzzle;
-    return `<main class="screen screen--oas">
+    return `<main class="screen db-page db-page--oas">
       ${oasHeader('archives')}
-      <div class="oas-page">
-        <div class="oas-breadcrumb"><span>档案管理</span><span>/</span><span>异常档案</span><span>/</span><span>${esc(a.archiveNo)}</span></div>
-        <div class="oas-title-row">
-          <div><h1>${esc(a.tag)}</h1><p>${esc(a.hospital)} · 最近更新 2026-10-23 03:47</p></div>
-          <div class="oas-date">访问级别：LEVEL 3</div>
+      <div class="db-container">
+        <div class="db-breadcrumb">当前位置：档案管理 / 异常档案 / ${esc(a.archiveNo)}</div>
+        <div class="db-page-head db-page-head--flat">
+          <div><h1>${esc(a.tag)}</h1><p>${esc(a.hospital)} · 最近更新 2026-10-24 03:47</p></div>
+          <button type="button" class="db-btn db-btn--ghost" data-action="back">← 返回工作台</button>
         </div>
 
-        <div class="archive-hero">
-          <section class="archive-identity">
-            <div class="archive-identity__head">
-              <div><h1>${esc(a.name)} <span style="font-size:13px;color:#8a9aa8;font-weight:400">${esc(a.sex)} / ${a.age}岁</span></h1><p>${esc(a.job)} · ${esc(a.city)}</p></div>
-              <span class="archive-identity__stamp">${solved ? '已复核' : '待复核'}</span>
-            </div>
-            <div class="archive-meta-grid">
-              <div><div class="k">档案编号</div><div class="v">${esc(a.archiveNo)}</div></div>
-              <div><div class="k">${isShenbo ? '设备编号' : '移植类型'}</div><div class="v">${esc(a.organ)}</div></div>
-              <div><div class="k">${isShenbo ? '负责区域' : '血型'}</div><div class="v">${esc(isShenbo ? a.city : a.blood)}</div></div>
-              <div><div class="k">${isShenbo ? '最近工单' : '手术日期'}</div><div class="v">${esc(a.date)}</div></div>
-            </div>
-          </section>
-          <aside class="archive-warning">
-            <h3>系统标记</h3>
-            <p>${esc(a.warning)}</p>
-            <span class="big-num">${isShenbo ? '68s' : '74'}</span>
-          </aside>
-        </div>
+        <section class="db-profile-card">
+          <div class="db-profile-top">
+            <div class="db-avatar db-avatar--lg">${esc(a.name.slice(0, 1))}</div>
+            <div class="db-profile-name"><h2>${esc(a.name)} <span>${esc(a.sex)} / ${a.age}岁</span></h2><p>${esc(a.job)} · ${esc(a.city)}</p></div>
+            <span class="db-tag ${solved ? 'db-tag--green' : 'db-tag--red'}">${solved ? '已复核' : '待复核'}</span>
+          </div>
+          <div class="db-profile-grid">
+            <div><span>档案编号</span><strong>${esc(a.archiveNo)}</strong></div>
+            <div><span>${isShenbo ? '设备编号' : '移植类型'}</span><strong>${esc(a.organ)}</strong></div>
+            <div><span>${isShenbo ? '负责区域' : '血型'}</span><strong>${esc(isShenbo ? a.city : a.blood)}</strong></div>
+            <div><span>${isShenbo ? '最近工单' : '手术日期'}</span><strong>${esc(a.date)}</strong></div>
+          </div>
+        </section>
 
-        <div class="dash-grid">
-          <div>
-            <section class="panel">
-              <div class="panel__head"><h2>病历与随访记录</h2><span class="tiny muted">${a.records.length} 条</span></div>
-              <div class="panel__body">
-                <div class="timeline">
-                  ${a.records.map((r) => `<div class="timeline-item">
-                    <div class="meta"><span>${esc(r.date)}</span><span class="type">${esc(r.type)}</span><span>${esc(r.doctor)}</span></div>
-                    <p>${esc(r.text)}</p>
-                  </div>`).join('')}
-                </div>
+        <div class="db-archive-layout">
+          <div class="db-stack">
+            <section class="db-panel">
+              <div class="db-panel-head"><div>${dbIcon('clipboard')}<strong>病历与随访记录</strong></div><span class="db-muted">${a.records.length} 条记录</span></div>
+              <div class="db-record-list">
+                ${a.records.map((r) => `<div class="db-record">
+                  <div class="db-record__meta"><span class="db-record__type">${esc(r.type)}</span><span>${esc(r.date)}</span><span>${esc(r.doctor)}</span></div>
+                  <p>${esc(r.text)}</p>
+                </div>`).join('')}
               </div>
             </section>
 
-            <section class="panel" style="margin-top:14px">
-              <div class="panel__head"><h2>档案摘要</h2><span class="tiny muted">AUTO SUMMARY</span></div>
-              <div class="panel__body">
-                <p style="font-size:11px;color:#617385;line-height:1.9">${esc(a.summary)}</p>
-                <div class="notice" style="margin-top:14px">${isShenbo ? '注意：该档案关联 2019 年旧工单。张桂兰，女，63 岁，2025-11-04 03:47 于心内科 3 号床去世。' : '注意：供体 D-074 的原始身份信息已被完整匿名化。调阅记录显示，程遥曾于 2021 年查阅过该档案。'}</div>
+            <section class="db-panel">
+              <div class="db-panel-head"><div>${dbIcon('file')}<strong>档案摘要</strong></div><span class="db-muted">AUTO SUMMARY</span></div>
+              <div class="db-panel-body">
+                <p class="db-summary">${esc(a.summary)}</p>
+                <div class="db-callout ${isShenbo ? 'db-callout--amber' : 'db-callout--blue'}">
+                  ${dbIcon('alert')}<span>${isShenbo ? '该档案关联 2019 年旧工单。张桂兰，女，63 岁，2026-08-24 03:47 于心内科 3 号床去世。' : '供体 D-074 的原始身份信息已被完整匿名化。调阅记录显示，程遥曾于 2021 年查阅过该档案。'}</span>
+                </div>
               </div>
             </section>
           </div>
 
-          <aside>
-            <div class="puzzle-box">
-              <div class="puzzle-box__head">
-                <h3>${isShenbo ? '异常波形 · 附件 68' : '附件 074 · 乱码文本'}</h3>
-                <p>${esc(puzzle.type)} · ${solved ? '已解密' : '等待输入'}</p>
-              </div>
-              <div class="puzzle-box__body">
-                ${solved ? `<div class="puzzle-success">
-                  <span class="answer">${esc(puzzle.answer)}</span>
-                  <h3>${esc(puzzle.successTitle)}</h3>
+          <aside class="db-stack">
+            <section class="db-panel db-puzzle-card">
+              <div class="db-panel-head"><div>${dbIcon(isShenbo ? 'monitor' : 'lock')}<strong>${isShenbo ? '异常波形 · 附件 68' : '附件 074 · 乱码文本'}</strong></div><span class="db-tag">${solved ? '已解密' : esc(puzzle.type)}</span></div>
+              <div class="db-panel-body">
+                ${solved ? `<div class="db-success-box">
+                  <span class="db-success-answer">${esc(puzzle.answer)}</span>
+                  <strong>${esc(puzzle.successTitle)}</strong>
                   <p>${esc(puzzle.successText)}</p>
-                  <button class="btn btn--sm btn--primary" type="button" data-action="go-puzzle-next" data-id="${a.id}">查看已解锁入口</button>
+                  <button class="db-btn db-btn--primary db-btn--sm" type="button" data-action="go-puzzle-next" data-id="${a.id}">查看已解锁入口</button>
                 </div>` : `
-                  ${isShenbo ? `<div class="cipher" aria-label="摩斯码">
-                    ${['.----', '....-', '--...', '....-'].map((code) => `<span>${code}</span>`).join('')}
-                  </div>` : `<div class="cipher" aria-label="密文">
-                    ${puzzle.cipher.split('').map((c) => `<span>${esc(c)}</span>`).join('')}
-                  </div>`}
-                  <p class="puzzle-note">${esc(puzzle.hint)}</p>
-                  ${isShenbo ? '<button class="btn btn--sm btn--ghost" type="button" data-action="play-morse" style="margin-bottom:12px">▶ 播放信号节奏</button>' : ''}
+                  ${isShenbo ? `<div class="db-cipher">${['.----', '....-', '--...', '....-'].map((code) => `<span>${code}</span>`).join('')}</div>` : `<div class="db-cipher">${puzzle.cipher.split('').map((c) => `<span>${esc(c)}</span>`).join('')}</div>`}
+                  <p class="db-hint">${esc(puzzle.hint)}</p>
+                  ${isShenbo ? `<button class="db-btn db-btn--ghost db-btn--sm db-btn--block" type="button" data-action="play-morse" style="margin-bottom:12px">▶ 播放信号节奏</button>` : ''}
                   <form data-form="archive-puzzle" data-id="${a.id}">
-                    <label class="field-label" for="archive-answer">${isShenbo ? '输入解出的数字' : '输入解密结果（英文）'}</label>
-                    <input class="field" id="archive-answer" name="answer" type="text" inputmode="${isShenbo ? 'numeric' : 'text'}" autocomplete="off" placeholder="${isShenbo ? '四位数字' : '拼音或英文'}">
-                    <p class="form-error" data-error></p>
-                    <button class="btn btn--primary btn--block" type="submit">提交校验</button>
+                    <label class="db-label" for="archive-answer">${isShenbo ? '输入解出的数字' : '输入解密结果（英文）'}</label>
+                    <input class="db-input" id="archive-answer" name="answer" type="text" inputmode="${isShenbo ? 'numeric' : 'text'}" autocomplete="off" placeholder="${isShenbo ? '四位数字' : '拼音或英文'}">
+                    <p class="db-form-error" data-error></p>
+                    <button class="db-btn db-btn--primary db-btn--block" type="submit">提交校验</button>
                   </form>
-                  <p class="tiny" style="color:#9aa8b3;margin-top:12px">若你忘记了密码规则，线索栏里会保留已发现的方法。</p>`}
+                  <p class="db-tip">若忘记规则，线索栏会保留已发现的方法。</p>`}
               </div>
-            </div>
+            </section>
 
-            <div class="side-card" style="margin-top:12px">
-              <h3>关联入口</h3>
-              <div class="side-list">
+            <section class="db-panel">
+              <div class="db-panel-head"><div>${dbIcon('file')}<strong>关联入口</strong></div></div>
+              <div class="db-kv-list">
                 <div><span>临渊研究所</span><strong>${bothSolved() ? '已解锁' : '待复核'}</strong></div>
                 <div><span>医院报修系统</span><strong>${state.puzzles.shenbo ? '已解锁' : '待复核'}</strong></div>
                 <div><span>调查视角</span><strong>${esc(currentIdentityLabel())}</strong></div>
               </div>
-            </div>
+            </section>
           </aside>
         </div>
 
-        <div class="unlock-strip" style="margin-top:16px">
-          <div>
-            <h3>${bothSolved() ? '两份异常档案已完成复核' : '还需要复核另一份异常档案'}</h3>
-            <p>${bothSolved() ? '临渊医学人文研究所官网入口已开放。' : '系统会在两份档案都解密后开放外部研究机构入口。'}</p>
-          </div>
-          ${bothSolved() ? '<button class="btn btn--primary" type="button" data-action="go" data-id="institute">进入临渊研究所</button>' : '<button class="btn btn--ghost" type="button" data-action="back">返回工作台</button>'}
+        <div class="db-bottom-cta">
+          <div><strong>${bothSolved() ? '两份异常档案已完成复核' : '还需要复核另一份异常档案'}</strong><p>${bothSolved() ? '临渊医学人文研究所官网入口已开放。' : '两份档案都解密后，系统会开放外部研究机构入口。'}</p></div>
+          ${bothSolved() ? '<button class="db-btn db-btn--primary" type="button" data-action="go" data-id="institute">进入临渊研究所</button>' : '<button class="db-btn db-btn--ghost" type="button" data-action="back">返回工作台</button>'}
         </div>
-
-        <div class="oas-foot"><span>${esc(a.archiveNo)} / 审计编号 AX-2026-0314</span><span>请勿截图、外传或向患者本人展示本页</span></div>
+        <div class="db-oas-footer"><span>${esc(a.archiveNo)} / 审计编号 AX-2026-0314</span><span>请勿截图、外传或向患者本人展示本页</span></div>
       </div>
     </main>`;
   };
@@ -1392,30 +1355,30 @@
      SCENE: panyang
      --------------------------------------------------------- */
   SCENES.panyangLogin = function () {
-    return `<main class="screen screen--panyang-login">
-      <section class="panyang-visual">
-        <div class="panyang-brand"><div class="mark">PY</div><div><div class="name">盘阳生物科技</div><div class="en">PANYANG BIOSCIENCE / CHENGDU</div></div></div>
-        <div>
-          <h2>让每一次心跳，<br>都有回音。</h2>
-          <p>盘阳生物科技致力于将生命信号转化为可被理解的语言。我们的合作网络覆盖全国 12 个城市，服务超过 2,400 台医疗设备。</p>
+    return `<main class="screen db-panyang-login">
+      <header class="db-py-header">
+        <div class="db-py-header__inner">
+          <div class="db-py-brand"><span class="mark">PY</span><div><strong>盘阳生物科技</strong><small>PANYANG BIOSCIENCE / CHENGDU</small></div></div>
+          <div class="db-version">员工内网 / INTERNAL</div>
         </div>
-        <div class="panyang-visual__foot">PANYANG / 27F / 03:47 / INTERNAL ONLY</div>
-      </section>
-      <section class="panyang-login-panel">
-        <div class="panyang-login-card">
-          <p class="eyebrow eyebrow--blue">EMPLOYEE PORTAL</p>
-          <h1>员工内网</h1>
-          <p>仅限盘阳生物及合作机构员工使用。所有操作将被记录在“搏印”审计系统。</p>
-          <form data-form="panyang-login" novalidate>
-            <div class="official-field"><label for="py-user">员工编号</label><input class="field" id="py-user" name="user" type="text" autocomplete="username" placeholder="例如：PY068"></div>
-            <div class="official-field"><label for="py-pass">密码</label><input class="field" id="py-pass" name="pass" type="password" autocomplete="current-password" placeholder="请输入密码"></div>
-            <p class="form-error" data-error></p>
-            <button class="login-btn" type="submit">登 录</button>
+      </header>
+      <div class="db-py-main">
+        <div class="db-login-card">
+          <div class="db-py-card-head">
+            <p class="db-eyebrow">EMPLOYEE PORTAL</p>
+            <h1>员工内网</h1>
+            <p>仅限盘阳生物及合作机构员工使用。所有操作将被记录在“搏印”审计系统。</p>
+          </div>
+          <form class="db-login-form" data-form="panyang-login" novalidate>
+            <div class="db-field-group"><label for="py-user">员工编号</label><div class="db-input-wrap">${dbIcon('user')}<input class="db-input" id="py-user" name="user" type="text" autocomplete="username" placeholder="例如：PY068"></div></div>
+            <div class="db-field-group"><label for="py-pass">密码</label><div class="db-input-wrap">${dbIcon('lock')}<input class="db-input" id="py-pass" name="pass" type="password" autocomplete="current-password" placeholder="请输入密码"></div></div>
+            <p class="db-form-error" data-error></p>
+            <button class="db-btn db-btn--block db-btn--teal" type="submit">登 录</button>
           </form>
-          <p class="login-hint">员工编号：<strong>PY068</strong>　密码：<strong>686868</strong><br>凭据来自华夏灵异网旧帖的残留表单。</p>
-          <button class="panyang-back" type="button" data-action="back">← 返回华夏灵异网</button>
+          <p class="db-demo-hint">员工编号：PY068　密码：686868<br>凭据来自华夏灵异网旧帖的残留表单。</p>
+          <div class="db-py-foot"><button class="db-text-link" type="button" data-action="back">← 返回华夏灵异网</button></div>
         </div>
-      </section>
+      </div>
     </main>`;
   };
 
@@ -2030,7 +1993,7 @@
             </div>
             <form class="term-input-row" data-form="terminal-input">
               <input class="field" name="q" id="terminalInput" type="text" autocomplete="off" placeholder="输入你想问的问题..." aria-label="输入你想问的问题">
-              <button class="btn" type="submit">发送</button>
+              <button class="btn term-send" type="submit">发送</button>
             </form>
             <div class="term-hint"><span>不要问它不想回答的问题。</span><span class="blink">█</span></div>`}
         </div>
@@ -2181,7 +2144,7 @@
     const step = Math.min(state.endingStep, Math.max(0, script.length - 1));
     const line = script[step] || script[0];
     const lineClass = [line.blood ? 'ending-line--blood' : '', line.green ? 'ending-line--green' : '', line.badge ? 'ending-line--badge' : '', line.small ? 'ending-line--small' : ''].filter(Boolean).join(' ');
-    return `<main class="screen screen--ending ${id === 'true' ? 'is-true' : ''}">
+    return `<main class="screen screen--ending ending--${id} ${id === 'true' ? 'is-true' : ''}">
       <div class="ending-bg ${endingBg(id)}" aria-hidden="true"></div>
       <div class="ending-veil ${endingVeil(id)}" aria-hidden="true"></div>
       <div class="ending-top"><span>RECOVERED FILE / ${esc(id.toUpperCase())}</span><span class="rec">● REC ${esc(D.endings[id].no)} / 04</span></div>
@@ -2223,7 +2186,6 @@
     state.runRecorded = true;
     if (!wasRecorded) state.completedRuns += 1;
     state.finalChoice = id;
-    try { window.localStorage.setItem(LEGACY_KEY, 'true'); } catch (e) {}
     saveState();
     historyStack = [];
     closeModal(true);
@@ -3109,6 +3071,12 @@
       document.title = '别走。';
     } else {
       document.title = SCENE_TITLES[route.scene] || '末栏 · ARG 三部曲';
+    }
+  });
+
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) {
+      window.location.reload();
     }
   });
 
